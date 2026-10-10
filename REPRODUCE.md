@@ -16,8 +16,7 @@ by **Unsloth**. Full chain and licence terms: [`docs/ATTRIBUTION.md`](docs/ATTRI
 |---|---|
 | **Recorded** | Every command below was taken from the build session's own command log (the shell commands as executed, with arguments), not reconstructed from quantize log headers. The quantize log files themselves are not shipped. |
 | **Verified** | The sha256 and byte size of every intermediate that still exists (table at the end), the source weights against the abliteration run's own `SHA256SUMS`, the shipped shards against the release `SHA256SUMS`, and a byte-identical rebuild of both MTP heads on a second llama.cpp tree and thread count. |
-| **Rebuilt** | On 2026-10-10 steps 5 and 6, the release step (metadata rewrite + split) and the Q8 reference (quantize + split + rename) were re-run from the kept inputs with the recorded commands and thread counts. Every output matched its recorded sha256 and byte size: q4lean2 `a5f626a5…`, q4lean5 `e84a8f84…`, all three q4lean5 release shards, REF-pure `d5ab2a73…` and all five Q8_0 release shards. |
-| **Not verified** | Steps 2–4 (BF16 → F16 → Hybrid-f16 → q4ple) have not been re-run; they need about 420 GB of scratch space. Until they reproduce `2eace280…` and `ac7a3c7c…`, the acceptance bar in [`docs/TYPEMAP.md`](docs/TYPEMAP.md) applies to them. |
+| **Rebuilt** | On 2026-10-10 every step was re-run from the kept inputs with the recorded commands, thread counts and tool commits, and every output matched its recorded sha256 and byte size: F16 `2eace280…` and mmproj `85a27e03…` from the BF16 source; q4ple `ac7a3c7c…` from the F16 (through Hybrid-f16, three passes); q4lean2 `a5f626a5…`; q4lean5 `e84a8f84…` and all three q4lean5 release shards; REF-pure `d5ab2a73…` and all five Q8_0 release shards. Each step was run from the stored output of the step before it, not as one unbroken run. |
 
 ## Environment
 
@@ -54,7 +53,8 @@ stock build produce a different model.
 ## Step 2 — convert to F16 GGUF (`$LLAMA_TOOLS`)
 
 Python environment: the tree's converter requirements plus `pyyaml`, `tqdm`, `transformers`
-(versions not recorded).
+(not recorded at the time; the 2026-10-10 rebuild reproduced the F16 byte for byte with Python 3.11.15,
+torch 2.14.1, transformers 5.18.0, safetensors 0.8.0, numpy 2.4.6).
 
 ```sh
 cd "$LLAMA_TOOLS"
@@ -98,8 +98,9 @@ Q="$LLAMA_FORK/build/bin/llama-quantize"
 ```
 
 Output `Qwen3.8-Flash-Next-Heretic-Hybrid-f16.gguf`: ~180.4 GB, census F16 690 · F32 388 ·
-Q4_K 96 · Q4_0 48 · Q8_0 2. **Exact bytes and sha256 not recorded; the file was deleted** (it is
-unservable on Metal in that fork, see README). The PLE table (`per_layer_token_embd`) is still
+Q4_K 96 · Q4_0 48 · Q8_0 2. The original file was deleted unhashed (it is unservable on Metal in that fork, see README); the
+2026-10-10 rebuild produced 180,355,022,976 B, sha256
+`24d20dbed46fdd3c367328c6f512882a424c98ba2e8c0c28ec3f2a5ef33c1684`, and step 4 on it reproduced q4ple exactly. The PLE table (`per_layer_token_embd`) is still
 F16 here; step 4 takes it to Q4_0.
 
 ## Step 4 — q4ple: PLE table to Q4_0 (`$LLAMA_FORK`, 6 threads)
@@ -213,7 +214,7 @@ LLAMA_MMAP_PREFETCH=0 "$Q" --pure \
 - **Thread count.** Steps 3–6 ran at different thread counts (12, 6, 6, 6). A probe on a small
   synthetic F16 GGUF (not on this model) found `$LLAMA_FORK`'s `llama-quantize` output
   thread-invariant, and the MTP Q8_0 head above came out identical at 8 and 4 threads on two
-  different trees. Confirmed for steps 5–6 and the Q8 reference by the 2026-10-10 rebuild; expected, not proven, for steps 2–4.
+  different trees. Confirmed for every step by the 2026-10-10 rebuild.
 - **Stock vs fork quantize.** On the same synthetic GGUF, stock `v0.6.0` `--pure q8_0` matched
   the fork byte for byte. That covers kernels, not the include/exclude gating of steps 3–6,
   which stock does not have.
@@ -221,9 +222,13 @@ LLAMA_MMAP_PREFETCH=0 "$Q" --pure \
   `dfa0c0f` with every hunk of the shipped patch **except** the `LLAMA_MMAP_RANDOM` hunk in
   `src/llama-mmap.cpp`, which was added the day after the builds. That hunk only adds an
   `madvise` hint at load time; the patch's quantize code is the same as what ran.
-- **Converter environment.** Python package versions for step 2 were not recorded. A different
+- **Converter environment.** Python package versions for step 2 were not recorded at the time. A different
   `transformers` / `numpy` / `gguf` version could in principle change the F16 bytes; compare
-  against `2eace280…` before continuing.
+  against `2eace280…` before continuing. The versions that reproduced it are listed under "Verified vs inferred".
+- **Memory.** The PLE table is one 95.4 GiB F16 tensor. Steps 2–4 hold it in RAM (the converter
+  streams it; each quantize pass copies it whole). On a 128 GB Mac the rebuild ran with
+  `LLAMA_MMAP_PREFETCH=0`, the quantize at lower priority and other model servers stopped; swap
+  peaked near 51 GB during steps 3–4 with page-out rates near zero, so leave room for that.
 - **Where a mismatch shows up.** If step 2 matches but a later step does not, the cause is in the
   quantize steps; compare tensor by tensor (by name, not by offset: storage order can differ
   between files that hold identical tensors).
@@ -236,9 +241,9 @@ LLAMA_MMAP_PREFETCH=0 "$Q" --pure \
 | sha256 + size of F16, mmproj, q4ple, q4lean2, q4lean5, REF-pure | **verified**, re-hashed 2026-10-10 from the files produced by those commands |
 | shipped shards = metadata rewrite + split of `e84a8f84…` | **recorded** pipeline; shard sha256 values verified against the release `SHA256SUMS` |
 | MTP BF16 / Q8_0 reproducible | **verified**, byte-identical rebuild on v0.6.0 |
-| Hybrid-f16 exact bytes / sha256 | **not recorded** (deleted) |
-| step-2 Python package versions | **not recorded** |
+| Hybrid-f16 exact bytes / sha256 | **recorded** on the 2026-10-10 rebuild: 180,355,022,976 B, `24d20dbed46fdd3c367328c6f512882a424c98ba2e8c0c28ec3f2a5ef33c1684` |
+| step-2 Python package versions | **recorded** 2026-10-10 (unchanged since the original run, F16 rebuilt byte for byte): Python 3.11.15, torch 2.14.1, transformers 5.18.0, safetensors 0.8.0, numpy 2.4.6, tokenizers 0.23.2, sentencepiece 0.2.2 |
 | q4ple → q4lean2 → q4lean5 → release shards reproduce byte for byte | **verified**, rebuilt 2026-10-10 |
 | F16 → REF-pure → Q8_0 release shards reproduce byte for byte | **verified**, rebuilt 2026-10-10 |
-| BF16 → F16 → Hybrid-f16 → q4ple reproduce byte for byte | **unverified**: not re-run (space) |
+| BF16 → F16 and F16 → Hybrid-f16 → q4ple reproduce byte for byte | **verified**, rebuilt 2026-10-10 |
 | thread count does not matter for steps 3–6 | **inferred** from a small-model probe |
