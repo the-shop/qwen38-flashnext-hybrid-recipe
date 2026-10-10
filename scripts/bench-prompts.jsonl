@@ -1,0 +1,10 @@
+{"prompt": "Write a complete Python implementation of an LRU cache class with get and put methods backed by a doubly linked list and a dict. Include docstrings and a short usage example."}
+{"prompt": "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost? Show your work, end with ANSWER=<amount>."}
+{"prompt": "Explain the difference between a mutex and a semaphore in exactly three sentences, then give one concrete example of when each is the right choice."}
+{"prompt": "Write a Bash one-liner that finds the 10 largest files under /var/log, prints their size in MB and full path, sorted descending."}
+{"prompt": "Given an array of integers, write a function that returns the length of the longest strictly increasing subsequence. Explain the O(n log n) approach."}
+{"prompt": "Rewrite the following sentence to be more concise without losing meaning: 'In the event that the aforementioned requirements are not satisfied by the designated deadline, it will be necessary for us to initiate a review of the entire project timeline.'"}
+{"prompt": "What is the value of 0x1F in decimal? Then compute (0x1F << 3) | 0x07 and give the result in both hex and decimal."}
+{"prompt": "Write a short poem of exactly four lines about a GPU running out of memory at 3am. No preamble, just the poem."}
+{"prompt": "You are reviewing a code diff. The change replaces 'if (x > 100)' with 'if (x >= 100)' and moves a discount calculation after a subtotal computation. In two sentences, state whether this looks correct and what you would verify first."}
+{"prompt": "Summarize the tradeoffs of quantizing only the MoE expert weights to 4-bit while keeping attention and dense layers in FP16. Keep it under 120 words."}

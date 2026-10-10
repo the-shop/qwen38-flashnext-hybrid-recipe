@@ -1,0 +1,367 @@
+diff --git a/include/llama.h b/include/llama.h
+index 177fc10..5f45ac7 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -11,6 +11,7 @@
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdbool.h>
++#include <string>
+ 
+ #ifdef LLAMA_SHARED
+ #    if defined(_WIN32) && !defined(__MINGW32__)
+@@ -433,6 +434,8 @@ extern "C" {
+         bool pure;                                                  // quantize all tensors to the default type
+         bool keep_split;                                            // quantize to the same number of shards
+         bool dry_run;                                               // calculate and show the final quantization size without performing quantization
++        std::string fname_include;                                  // quantize only tensors whose name contains one of these comma-separated patterns
++        std::string fname_exclude;                                  // never quantize tensors whose name contains one of these comma-separated patterns
+         const struct llama_model_imatrix_data * imatrix;            // pointer to importance matrix data
+         const struct llama_model_kv_override * kv_overrides;        // pointer to kv overrides
+         const struct llama_model_tensor_override * tt_overrides;    // pointer to tensor overrides
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index 07bf881..9b1a0bf 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -293,6 +293,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+ 
+     { LLM_KV_HYPER_CONNECTION_COUNT,                 "%s.hyper_connection.count"                 },
+     { LLM_KV_HYPER_CONNECTION_LOWRANK,               "%s.hyper_connection.lowrank"               },
++    { LLM_KV_HYPER_CONNECTION_LOWRANK_ALT,           "%s.hyper_connection.low_rank"              },
+     { LLM_KV_HYPER_CONNECTION_SINKHORN_ITERATIONS,   "%s.hyper_connection.sinkhorn_iterations"   },
+     { LLM_KV_HYPER_CONNECTION_EPSILON,               "%s.hyper_connection.epsilon"               },
+ 
+@@ -301,6 +302,9 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     { LLM_KV_PLE_NGRAM_MULTIPLIERS,                  "%s.ple.ngram_multipliers"                  },
+     { LLM_KV_PLE_NGRAM_VOCAB_SIZES,                  "%s.ple.ngram_vocab_sizes"                  },
+     { LLM_KV_PLE_NGRAM_OFFSETS,                      "%s.ple.ngram_offsets"                      },
++    { LLM_KV_PLE_NGRAM_MULTIPLIERS_ALT,              "%s.ple.layer_multipliers"                  },
++    { LLM_KV_PLE_NGRAM_VOCAB_SIZES_ALT,              "%s.ple.head_vocab_sizes"                   },
++    { LLM_KV_PLE_NGRAM_OFFSETS_ALT,                  "%s.ple.head_offsets"                       },
+ 
+     { LLM_KV_HASH_LAYER_COUNT,                       "%s.hash_layer_count"                       },
+ 
+@@ -532,6 +536,10 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+     { LLM_TENSOR_PLE_QUERY_NORM,                         "blk.%d.ple_query_norm" },
+     { LLM_TENSOR_PLE_CONV_NORM,                          "blk.%d.ple_conv_norm" },
+     { LLM_TENSOR_PLE_CONV1D,                             "blk.%d.ple_conv1d" },
++    { LLM_TENSOR_PLE_NGRAM_EMBD_ALT,                     "per_layer_token_embd" },
++    { LLM_TENSOR_PLE_KEY_NORM_ALT,                       "blk.%d.ple_norm_key" },
++    { LLM_TENSOR_PLE_QUERY_NORM_ALT,                     "blk.%d.ple_norm_query" },
++    { LLM_TENSOR_PLE_CONV_NORM_ALT,                      "blk.%d.ple_norm_conv" },
+     { LLM_TENSOR_ATTN_COMPRESSOR_WKV,                    "blk.%d.attn_compressor_kv" },
+     { LLM_TENSOR_ATTN_COMPRESSOR_WGATE,                  "blk.%d.attn_compressor_gate" },
+     { LLM_TENSOR_ATTN_COMPRESSOR_APE,                    "blk.%d.attn_compressor_ape" },
+@@ -754,6 +762,10 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_PLE_QUERY_NORM,             {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_PLE_CONV_NORM,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_PLE_CONV1D,                 {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
++    {LLM_TENSOR_PLE_NGRAM_EMBD_ALT,         {LLM_TENSOR_LAYER_REPEATING, GGML_OP_GET_ROWS}},
++    {LLM_TENSOR_PLE_KEY_NORM_ALT,           {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
++    {LLM_TENSOR_PLE_QUERY_NORM_ALT,         {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
++    {LLM_TENSOR_PLE_CONV_NORM_ALT,          {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_ATTN_COMPRESSOR_WKV,        {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_COMPRESSOR_WGATE,      {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_COMPRESSOR_APE,        {LLM_TENSOR_LAYER_REPEATING, GGML_OP_GET_ROWS}},
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index 5e81f6e..e6a3426 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -298,6 +298,7 @@ enum llm_kv {
+ 
+     LLM_KV_HYPER_CONNECTION_COUNT,
+     LLM_KV_HYPER_CONNECTION_LOWRANK,
++    LLM_KV_HYPER_CONNECTION_LOWRANK_ALT, // qwen4exp converter family #27742 writes low_rank
+     LLM_KV_HYPER_CONNECTION_SINKHORN_ITERATIONS,
+     LLM_KV_HYPER_CONNECTION_EPSILON,
+ 
+@@ -306,6 +307,9 @@ enum llm_kv {
+     LLM_KV_PLE_NGRAM_MULTIPLIERS,
+     LLM_KV_PLE_NGRAM_VOCAB_SIZES,
+     LLM_KV_PLE_NGRAM_OFFSETS,
++    LLM_KV_PLE_NGRAM_MULTIPLIERS_ALT, // qwen4exp converter family #27742: ple.layer_multipliers
++    LLM_KV_PLE_NGRAM_VOCAB_SIZES_ALT, // ... ple.head_vocab_sizes
++    LLM_KV_PLE_NGRAM_OFFSETS_ALT,     // ... ple.head_offsets
+ 
+     LLM_KV_HASH_LAYER_COUNT,
+ 
+@@ -597,6 +601,10 @@ enum llm_tensor {
+     LLM_TENSOR_PLE_QUERY_NORM,
+     LLM_TENSOR_PLE_CONV_NORM,
+     LLM_TENSOR_PLE_CONV1D,
++    LLM_TENSOR_PLE_NGRAM_EMBD_ALT,   // converter family #27742: per_layer_token_embd
++    LLM_TENSOR_PLE_KEY_NORM_ALT,     // ... blk.%d.ple_norm_key
++    LLM_TENSOR_PLE_QUERY_NORM_ALT,   // ... blk.%d.ple_norm_query
++    LLM_TENSOR_PLE_CONV_NORM_ALT,    // ... blk.%d.ple_norm_conv
+     LLM_TENSOR_ATTN_COMPRESSOR_WKV,
+     LLM_TENSOR_ATTN_COMPRESSOR_WGATE,
+     LLM_TENSOR_ATTN_COMPRESSOR_APE,
+diff --git a/src/llama-mmap.cpp b/src/llama-mmap.cpp
+index ed572da..fbffead 100644
+--- a/src/llama-mmap.cpp
++++ b/src/llama-mmap.cpp
+@@ -446,6 +446,14 @@ struct llama_mmap::impl {
+         size = file->size();
+         int fd = file->file_id();
+         int flags = MAP_SHARED;
++        // LLAMA_MMAP_PREFETCH=0 disables the eager whole-file pull-in (macOS WILLNEED /
++        // Linux MAP_POPULATE). Required for models larger than ~half of RAM: the eager
++        // read pages the entire file through the page cache and thrashes the unified
++        // memory pool. Also correct for random-access gather tables (qwen4exp PLE).
++        const char * mmap_prefetch_env = getenv("LLAMA_MMAP_PREFETCH");
++        if (mmap_prefetch_env != nullptr && strcmp(mmap_prefetch_env, "0") == 0) {
++            prefetch = 0;
++        }
+         if (numa) { prefetch = 0; }
+ #ifdef __linux__
+         if (posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL)) {
+@@ -465,7 +473,12 @@ struct llama_mmap::impl {
+                         strerror(errno));
+             }
+         }
+-        if (numa) {
++        // POSIX_MADV_RANDOM is unreachable on macOS as shipped: ggml_numa_init() is
++        // __gnu_linux__ only and ggml_is_numa() needs n_nodes > 1, so `numa` is always
++        // false here. LLAMA_MMAP_RANDOM makes it reachable. The PLE tensor is read
++        // ~2.66 KiB/token but default cluster readahead pulls ~256 KiB of pages that are
++        // never reused, evicting hot expert pages.
++        if (numa || getenv("LLAMA_MMAP_RANDOM") != nullptr) {
+             if (posix_madvise(addr, file->size(), POSIX_MADV_RANDOM)) {
+                 LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_RANDOM) failed: %s\n",
+                         strerror(errno));
+diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+index 744a559..c195598 100644
+--- a/src/llama-quant.cpp
++++ b/src/llama-quant.cpp
+@@ -1055,6 +1055,30 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
+ 
+         if (metadata[i].allows_quantization) {
+             metadata[i].target_type = llama_tensor_get_type(qs, params, tensor, default_type, metadata[i]);
++
++            // include/exclude gate: tensors outside fname_include (or inside fname_exclude)
++            // keep their original type = plain copy. Substring match, comma-separated patterns.
++            if (!params->fname_include.empty() || !params->fname_exclude.empty()) {
++                const std::string & name = metadata[i].name;
++                auto matches = [](const std::string & list, const std::string & n) {
++                    size_t start = 0;
++                    while (start <= list.size()) {
++                        size_t end = list.find(',', start);
++                        if (end == std::string::npos) end = list.size();
++                        std::string pat = list.substr(start, end - start);
++                        if (!pat.empty() && n.find(pat) != std::string::npos) {
++                            return true;
++                        }
++                        start = end + 1;
++                    }
++                    return false;
++                };
++                const bool in_include = params->fname_include.empty() || matches(params->fname_include, name);
++                const bool in_exclude = !params->fname_exclude.empty() && matches(params->fname_exclude, name);
++                if (!in_include || in_exclude) {
++                    metadata[i].target_type = tensor->type;
++                }
++            }
+         } else {
+             metadata[i].target_type = tensor->type;
+         }
+@@ -1324,6 +1348,8 @@ llama_model_quantize_params llama_model_quantize_default_params() {
+         /*.pure                        =*/ false,
+         /*.keep_split                  =*/ false,
+         /*.dry_run                     =*/ false,
++        /*.fname_include               =*/ "",
++        /*.fname_exclude               =*/ "",
+         /*.imatrix                     =*/ nullptr,
+         /*.kv_overrides                =*/ nullptr,
+         /*.tensor_type                 =*/ nullptr,
+@@ -1431,5 +1457,29 @@ void llama_quant_compute_types(
+     // compute types
+     for (size_t i = 0; i < n_tensors; i++) {
+         result_types[i] = llama_tensor_get_type(*qs, &local_params, tensors[i], default_type, metadata[i]);
++
++        // include/exclude gate: tensors outside fname_include (or inside fname_exclude)
++        // keep their original type = plain copy. Substring match, comma-separated patterns.
++        if (!local_params.fname_include.empty() || !local_params.fname_exclude.empty()) {
++            const std::string & name = metadata[i].name;
++            auto matches = [](const std::string & list, const std::string & n) {
++                size_t start = 0;
++                while (start <= list.size()) {
++                    size_t end = list.find(',', start);
++                    if (end == std::string::npos) end = list.size();
++                    std::string pat = list.substr(start, end - start);
++                    if (!pat.empty() && n.find(pat) != std::string::npos) {
++                        return true;
++                    }
++                    start = end + 1;
++                }
++                return false;
++            };
++            const bool in_include = local_params.fname_include.empty() || matches(local_params.fname_include, name);
++            const bool in_exclude = !local_params.fname_exclude.empty() && matches(local_params.fname_exclude, name);
++            if (!in_include || in_exclude) {
++                result_types[i] = tensors[i]->type;
++            }
++        }
+     }
+ }
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index f906af2..93d7928 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -29,7 +29,10 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_SSM_GROUP_COUNT,    hparams.ssm_n_group);
+ 
+     ml.get_key(LLM_KV_HYPER_CONNECTION_COUNT,   hparams.hc_count);
+-    ml.get_key(LLM_KV_HYPER_CONNECTION_LOWRANK, hparams.hc_lowrank);
++    if (!ml.get_key(LLM_KV_HYPER_CONNECTION_LOWRANK, hparams.hc_lowrank, false)) {
++        // GGUF converter family #27742 writes this key as low_rank
++        ml.get_key(LLM_KV_HYPER_CONNECTION_LOWRANK_ALT, hparams.hc_lowrank, false);
++    }
+     GGML_ASSERT(hparams.hc_count > 1);
+ 
+     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS, hparams.n_layer_nextn, false);
+@@ -42,6 +45,12 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_INDEXER_KEY_LENGTH, hparams.indexer_head_size,   false);
+     ml.get_key(LLM_KV_ATTENTION_INDEXER_TOP_K,      hparams.indexer_top_k,       false);
+     ml.get_key(LLM_KV_ATTENTION_INDEXER_BLOCK_SIZE, hparams.indexer_block_size,  false);
++    if (hparams.indexer_block_size == 0) {
++        // GGUF converter family #27742 omits indexer.block_size; the QSA block stride
++        // equals full_attention_interval (4) on this arch — 0 would divide by zero in the
++        // QSA graph paths.
++        hparams.indexer_block_size = 4;
++    }
+ 
+     // per-layer embedding (PLE)
+     hparams.n_embd_ple = hparams.n_embd;
+@@ -62,6 +71,14 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
+     hparams.ple_ngram_heads = load_u64(LLM_KV_PLE_NGRAM_VOCAB_SIZES, hparams.ple_ngram_vocab);
+     GGML_ASSERT(hparams.ple_ngram_heads == load_u64(LLM_KV_PLE_NGRAM_OFFSETS, hparams.ple_ngram_offs));
+ 
++    if (hparams.ple_ngram_size == 0) {
++        // GGUF converter family #27742 writes the same arrays as layer_multipliers /
++        // head_vocab_sizes / head_offsets. Missing keys would silently disable the PLE table.
++        hparams.ple_ngram_size  = load_u64(LLM_KV_PLE_NGRAM_MULTIPLIERS_ALT, hparams.ple_ngram_mult);
++        hparams.ple_ngram_heads = load_u64(LLM_KV_PLE_NGRAM_VOCAB_SIZES_ALT, hparams.ple_ngram_vocab);
++        GGML_ASSERT(hparams.ple_ngram_heads == load_u64(LLM_KV_PLE_NGRAM_OFFSETS_ALT, hparams.ple_ngram_offs));
++    }
++
+     if (hparams.ple_ngram_size > 0) {
+         // the hash spreads the heads over the 2..n_ngram grams and gives each head one slice of
+         // the PLE row. Without these the head loop divides by zero or truncates
+@@ -181,21 +198,30 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
+ 
+             // the checkpoint pads the table and does not export the divisor, so read the real
+             // height off the file instead of assuming one
+-            const auto * w_ngram = ml.get_weight(tn(LLM_TENSOR_PLE_NGRAM_EMBD, "weight", il).str().c_str());
++            // converter family #27742 writes this table as top-level per_layer_token_embd and
++            // the norms as ple_norm_*, so probe both namings and use whichever is present.
++            // The top-level ALT name matches at every il, so gate it on this layer actually
++            // carrying PLE tensors (ple_key exists at the PLE layer in both families).
++            const auto * w_ngram_pri = ml.get_weight(tn(LLM_TENSOR_PLE_NGRAM_EMBD, "weight", il).str().c_str());
++            const bool ple_layer = ml.get_weight(tn(LLM_TENSOR_PLE_KEY, "weight", il).str().c_str()) != nullptr;
++            const auto * w_ngram = w_ngram_pri
++                ? w_ngram_pri
++                : (ple_layer ? ml.get_weight(tn(LLM_TENSOR_PLE_NGRAM_EMBD_ALT, "weight", il).str().c_str()) : nullptr);
+             if (w_ngram) {
+                 GGML_ASSERT(w_ngram->tensor->ne[1] >= n_row_ngram &&
+                         "PLE n-gram table is shorter than the hash offsets need");
+                 n_row_ngram = w_ngram->tensor->ne[1];
+-            }
+ 
+-            layer.ple_ngram_embd = create_tensor(tn(LLM_TENSOR_PLE_NGRAM_EMBD, "weight", il), { n_embd_ngram, n_row_ngram }, TENSOR_NOT_REQUIRED);
++                const llm_tensor id_ngram = w_ngram_pri ? LLM_TENSOR_PLE_NGRAM_EMBD : LLM_TENSOR_PLE_NGRAM_EMBD_ALT;
++                layer.ple_ngram_embd = create_tensor(tn(id_ngram, "weight", il), { n_embd_ngram, n_row_ngram }, 0);
+ 
+-            if (layer.ple_ngram_embd) {
++                {
++                const bool ple_alt = ml.get_weight(tn(LLM_TENSOR_PLE_KEY_NORM, "weight", il).str().c_str()) == nullptr;
+                 layer.ple_key        = create_tensor(tn(LLM_TENSOR_PLE_KEY,        "weight", il), { hparams.n_embd_ple, hc_dim }, 0);
+                 layer.ple_value      = create_tensor(tn(LLM_TENSOR_PLE_VALUE,      "weight", il), { hparams.n_embd_ple, n_embd }, 0);
+-                layer.ple_key_norm   = create_tensor(tn(LLM_TENSOR_PLE_KEY_NORM,   "weight", il), { hc_dim }, 0);
+-                layer.ple_query_norm = create_tensor(tn(LLM_TENSOR_PLE_QUERY_NORM, "weight", il), { hc_dim }, 0);
+-                layer.ple_conv_norm  = create_tensor(tn(LLM_TENSOR_PLE_CONV_NORM,  "weight", il), { hc_dim }, 0);
++                layer.ple_key_norm   = create_tensor(tn(ple_alt ? LLM_TENSOR_PLE_KEY_NORM_ALT   : LLM_TENSOR_PLE_KEY_NORM,   "weight", il), { hc_dim }, 0);
++                layer.ple_query_norm = create_tensor(tn(ple_alt ? LLM_TENSOR_PLE_QUERY_NORM_ALT : LLM_TENSOR_PLE_QUERY_NORM, "weight", il), { hc_dim }, 0);
++                layer.ple_conv_norm  = create_tensor(tn(ple_alt ? LLM_TENSOR_PLE_CONV_NORM_ALT  : LLM_TENSOR_PLE_CONV_NORM,  "weight", il), { hc_dim }, 0);
+                 layer.ple_conv1d     = create_tensor(tn(LLM_TENSOR_PLE_CONV1D,     "weight", il), { hparams.ple_conv_kernel, hc_dim }, 0);
+ 
+                 GGML_ASSERT(hparams.is_recr(il) && "PLE is only supported on linear attention layers");
+@@ -204,6 +230,7 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
+ 
+                 GGML_ASSERT(hparams.il_2nd < 0 && "only one PLE layer is supported");
+                 hparams.il_2nd = il;
++                }
+             }
+         }
+ 
+@@ -836,15 +863,22 @@ ggml_tensor * llama_model_qwen4exp::graph::build_ple(
+     const int64_t n_seqs       = ubatch.n_seqs;
+     const int64_t n_seq_tokens = ubatch.n_seq_tokens;
+ 
++    // raw-F16 PLE tensors (converter family #27742 keeps them unquantized) mix into F32
++    // state math below; a quantized table dequantizes to F32 in the ops, so cast only
++    // F16 tensors and leave quantized ones untouched.
++    auto ple_f32 = [&](ggml_tensor * t) -> ggml_tensor * {
++        return t->type == GGML_TYPE_F16 ? ggml_cast(ctx0, t, GGML_TYPE_F32) : t;
++    };
++
+     ggml_tensor * emb = ggml_get_rows(ctx0, layer.ple_ngram_embd, ngram_ids);
+-    emb = ggml_reshape_2d(ctx0, emb, hparams.n_embd_ple, n_tokens);
++    emb = ggml_reshape_2d(ctx0, ple_f32(emb), hparams.n_embd_ple, n_tokens);
+     cb(emb, "ple_embd", il);
+ 
+-    ggml_tensor * key = build_lora_mm(layer.ple_key, emb);
+-    key = build_hc_norm(ggml_reshape_3d(ctx0, key, n_embd, hc, n_tokens), layer.ple_key_norm, il);
++    ggml_tensor * key = build_lora_mm(ple_f32(layer.ple_key), emb);
++    key = build_hc_norm(ggml_reshape_3d(ctx0, key, n_embd, hc, n_tokens), ple_f32(layer.ple_key_norm), il);
+ 
+-    ggml_tensor * val   = build_lora_mm(layer.ple_value, emb);
+-    ggml_tensor * query = build_hc_norm(x, layer.ple_query_norm, il);
++    ggml_tensor * val   = build_lora_mm(ple_f32(layer.ple_value), emb);
++    ggml_tensor * query = build_hc_norm(x, ple_f32(layer.ple_query_norm), il);
+ 
+     ggml_tensor * gate = ggml_sum_rows(ctx0, ggml_mul(ctx0, key, query));
+     gate = ggml_scale(ctx0, gate, 1.0f/sqrtf((float) n_embd));
+@@ -868,15 +902,16 @@ ggml_tensor * llama_model_qwen4exp::graph::build_ple(
+ 
+     GGML_UNUSED(n_gdn);
+     ggml_tensor * conv_in = build_conv_state(inp, inp->mctx->get_r_l(il),
+-            ggml_reshape_3d(ctx0, build_hc_norm(cur, layer.ple_conv_norm, il), hc_dim, n_seq_tokens, n_seqs),
++            ggml_reshape_3d(ctx0, build_hc_norm(cur, ple_f32(layer.ple_conv_norm), il), hc_dim, n_seq_tokens, n_seqs),
+             n_taps + 1, hc_dim, il);
+ 
++    ggml_tensor * conv_w = ple_f32(layer.ple_conv1d);
+     const size_t es_in = ggml_element_size(conv_in);
+-    const size_t es_w  = ggml_element_size(layer.ple_conv1d);
++    const size_t es_w  = ggml_element_size(conv_w);
+ 
+     ggml_tensor * conv = nullptr;
+     for (int64_t k = 0; k < n_kernel; ++k) {
+-        ggml_tensor * w = ggml_view_2d(ctx0, layer.ple_conv1d, 1, hc_dim, layer.ple_conv1d->nb[1], k*es_w);
++        ggml_tensor * w = ggml_view_2d(ctx0, conv_w, 1, hc_dim, conv_w->nb[1], k*es_w);
+         ggml_tensor * v = ggml_cont(ctx0, ggml_view_3d(ctx0, conv_in, n_seq_tokens, hc_dim, n_seqs,
+                     conv_in->nb[1], conv_in->nb[2], k*n_ngram*es_in));
+         v = ggml_mul(ctx0, v, w);
+diff --git a/tools/quantize/quantize.cpp b/tools/quantize/quantize.cpp
+index 8d03c8f..ab5b165 100644
+--- a/tools/quantize/quantize.cpp
++++ b/tools/quantize/quantize.cpp
+@@ -538,6 +538,19 @@ int llama_quantize(int argc, char ** argv) {
+         t_override.push_back({nullptr, GGML_TYPE_COUNT});  // array terminator
+         params.tt_overrides = t_override.data();
+     }
++    // include/exclude: restrict WHICH tensors get quantized (everything else is copied verbatim)
++    if (!included_weights.empty()) {
++        for (const auto & w : included_weights) {
++            if (!params.fname_include.empty()) params.fname_include += ",";
++            params.fname_include += w;
++        }
++    }
++    if (!excluded_weights.empty()) {
++        for (const auto & w : excluded_weights) {
++            if (!params.fname_exclude.empty()) params.fname_exclude += ",";
++            params.fname_exclude += w;
++        }
++    }
+     if (!prune_layers.empty()) {
+         prune_layers.push_back(-1);  // array terminator
+         params.prune_layers = prune_layers.data();

@@ -1,0 +1,90 @@
+diff --git a/bin/logits-dump.cpp b/bin/logits-dump.cpp
+index 594d14a..70876f1 100644
+--- a/bin/logits-dump.cpp
++++ b/bin/logits-dump.cpp
+@@ -28,6 +28,7 @@ struct Args {
+     int n_ctx = 8192;
+     int n_batch = 512;
+     int gpu = 999;   // -1 = CPU only
++    int kv = -1;     // -1 = tool default (f16); else GGML_TYPE_*
+     bool have_tokens = false;
+ };
+ 
+@@ -79,6 +80,7 @@ int main(int argc, char ** argv) {
+         else if (arg == "-t") a.tokens = next();
+         else if (arg == "-o") a.out = next();
+         else if (arg == "-g") a.gpu = atoi(next());
++        else if (arg == "-k") { std::string k = next(); if (k=="f16") a.kv=GGML_TYPE_F16; else if (k=="q8_0") a.kv=GGML_TYPE_Q8_0; else if (k=="q4_0") a.kv=GGML_TYPE_Q4_0; else die("bad -k value"); }
+         else if (arg == "-c") a.n_ctx = atoi(next());
+         else if (arg == "-b") a.n_batch = atoi(next());
+         else die("unknown arg");
+@@ -88,6 +90,7 @@ int main(int argc, char ** argv) {
+     llama_backend_init();
+     llama_model_params mp = llama_model_default_params();
+     mp.n_gpu_layers = a.gpu;
++    mp.use_extra_bufts = false;  // --no-repack: repacking blows a 188GB model into anonymous memory
+     // keep the PLE n-gram table host-side: same placement as the serving config's
+     // -ot ple_ngram_embd=CPU / -ot per_layer_token_embd=CPU (Metal cannot fit it)
+     static ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
+@@ -103,6 +106,7 @@ int main(int argc, char ** argv) {
+     llama_context_params cp = llama_context_default_params();
+     cp.n_ctx = a.n_ctx;
+     cp.n_batch = a.n_batch;
++    if (a.kv >= 0) { cp.type_k = (ggml_type) a.kv; cp.type_v = (ggml_type) a.kv; }
+     llama_context * ctx = llama_new_context_with_model(model, cp);
+     if (!ctx) die("context failed");
+ 
+diff --git a/bin/serve-flashnext-hybrid.sh b/bin/serve-flashnext-hybrid.sh
+index 5388823..ba43722 100755
+--- a/bin/serve-flashnext-hybrid.sh
++++ b/bin/serve-flashnext-hybrid.sh
+@@ -17,6 +17,7 @@ export LLAMA_MMAP_PREFETCH=0
+ DIR="${MODELS_DIR:?set MODELS_DIR}/qwen3.8-flash-next-heretic-f16"
+ MODEL="${MODEL:-$DIR/Qwen3.8-Flash-Next-Heretic-Hybrid-f16.gguf}"
+ MMPROJ="${MMPROJ:-$DIR/mmproj-Qwen3.8-Flash-Next-Heretic-F16.gguf}"
++[ "$MMPROJ" = "off" ] && MMPROJ=""   # vision not needed for text gates; costs ~0.9GB wired when on
+ MTP="${MTP:-}"
+ ALIAS="${ALIAS:-qwen3.8-flash-next-hybrid}"
+ PORT="${PORT:-8095}"
+@@ -26,6 +27,9 @@ THINK="${THINK:-true}"
+ SLOTS="${SLOTS:-1}"
+ CPU_MOE="${CPU_MOE:-0}"
+ NO_WARMUP="${NO_WARMUP:-0}"
++LOAD_MODE="${LOAD_MODE:-}"
++DRAFT_OT="${DRAFT_OT:-}"
++OT="${OT:-ple_ngram_embd=CPU,per_layer_token_embd=CPU}"
+ CACHE_RAM="${CACHE_RAM:-4096}"
+ BIN="${BIN:-${LLAMA_FORK:?set LLAMA_FORK or BIN}/build/bin/llama-server}"
+ 
+@@ -33,13 +37,18 @@ BIN="${BIN:-${LLAMA_FORK:?set LLAMA_FORK or BIN}/build/bin/llama-server}"
+ [ -f "$MODEL" ] || { echo "serve-flashnext-hybrid: missing $MODEL" >&2; exit 66; }
+ 
+ EXTRA=()
++# QSA (sparse attention) needs per-sequence streams: --kv-unified with >1 slots silently
++# falls back to DENSE attention (fork warning; output may differ). KV_UNIFIED=0 drops the flag.
++[ "${KV_UNIFIED:-1}" = "1" ] && EXTRA+=(--kv-unified)
+ [ -n "$MMPROJ" ] && EXTRA+=(--mmproj "$MMPROJ" --image-min-tokens 1024)
+ # CPU_MOE=1: keep routed experts host-side via per-tensor placement (--cpu-moe is broken for
+ # qwen4exp in this tree: nil Metal buffers). Wired footprint drops ~96GB -> fits default cap.
+ [ "$CPU_MOE" = "1" ] && EXTRA+=(-ot "ffn_gate_exps=CPU" -ot "ffn_up_exps=CPU" -ot "ffn_down_exps=CPU")
+ [ "$NO_WARMUP" = "1" ] && EXTRA+=(--no-warmup)
++[ -n "$LOAD_MODE" ] && EXTRA+=(--load-mode "$LOAD_MODE")
+ if [ -n "$MTP" ]; then
+   EXTRA+=(--spec-type draft-mtp -md "$MTP" --spec-draft-n-max 1)
++  [ -n "$DRAFT_OT" ] && EXTRA+=(--spec-draft-override-tensor "$DRAFT_OT")
+ fi
+ 
+ CMD=("$BIN" \
+@@ -47,10 +56,10 @@ CMD=("$BIN" \
+   --alias "$ALIAS" \
+   --host 127.0.0.1 --port "$PORT" \
+   --ctx-size "$CTX" \
+-  --parallel "$SLOTS" --kv-unified \
++  --parallel "$SLOTS" \
+   --n-gpu-layers 999 \
+   --fit off \
+-  -ot "ple_ngram_embd=CPU,per_layer_token_embd=CPU" \
++  -ot "$OT" \
+   --flash-attn on \
+   --cache-type-k "$KVTYPE" \
+   --cache-type-v "$KVTYPE" \
