@@ -1,11 +1,13 @@
 # Ground-truth type maps
 
-The literal `--include-weights` arguments for q4lean2 and q4lean5 were never recorded.
-**This file replaces them** — read directly out of the shipped GGUF headers, so it is
-measured ground truth rather than a reconstruction of someone's command line.
+These tables are read directly out of the shipped GGUF headers: measured ground truth for what
+the build produced. The commands that produced it (every `--include-weights` /
+`--exclude-weights` argument, per step) are in [`../REPRODUCE.md`](../REPRODUCE.md).
+v0.1.0 of this file said those arguments were never recorded; they were in the build
+session's command log, not in the quantize logs.
 
-For reproduction this is arguably *better* than the argv: it states the target, not the
-route taken to it.
+For acceptance this file is the target: it states what a rebuild must produce, whatever route
+is taken to it.
 
 ## q4lean2 — 102,523,604,096 B (95.5 GiB)
 
@@ -56,10 +58,11 @@ header in the q4lean5 quantize log (not shipped).
 
 ## Two traps this exposes
 
-**The PLE table is Q4_0 in q4lean, not F16.** `scripts/quant-heretic-hybrid.sh` keeps it F16 —
-that script builds a *different artifact* (`Hybrid-f16.gguf`, since deleted as VOID-ARCH).
-**Do not attribute that script's `--include-weights` strings to q4lean.** They are not the
-same recipe.
+**The PLE table is Q4_0 in q4lean, not F16.** `scripts/quant-heretic-hybrid.sh` keeps it F16
+because it is only the **first step** of the q4lean chain: it builds `Hybrid-f16.gguf` (since
+deleted as VOID-ARCH), and the next step (q4ple) takes `per_layer_token_embd` to Q4_0. Its
+`--include-weights` strings are q4lean's step 3, not the whole recipe; the later passes change
+the expert gate/up type and the dense tier. Full chain: [`../REPRODUCE.md`](../REPRODUCE.md).
 
 **Format floors are visible here.** Tensors that stay F16 or fall to Q8_0 under a 256-block
 target do so because their `ne[0]` does not divide 256 — MoE down-proj at 640, the PLE table
@@ -68,8 +71,9 @@ it as `ncols N not divisible by 256 ... falling back`.
 
 ## Status
 
-The chain in `README.md` remains reconstructed and unverified. This type map, by contrast, is
-measured from the shipped files. A rebuild that reproduces **these tables** has reproduced the
+The chain in `REPRODUCE.md` is the recorded command sequence, but it has not been re-run end to
+end, so it is unverified until a rebuild reproduces the byte count. This type map, by contrast,
+is measured from the shipped files. A rebuild that reproduces **these tables** has reproduced the
 model, whatever arguments get used to reach it.
 
 ## Rebuild acceptance bar

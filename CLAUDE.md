@@ -53,13 +53,15 @@ Before writing anything public — model card, README, commit message, post, iss
 
 ## Reproduction
 
-**`docs/TYPEMAP.md` is the authoritative recipe**, not a command line. The literal
-`--include-weights` strings for q4lean2/q4lean5 were never recorded; the type maps were read
-out of the shipped GGUF headers. A rebuild that reproduces those tables has reproduced the model.
+**`docs/TYPEMAP.md` is the acceptance target**: type maps read out of the shipped GGUF headers.
+A rebuild that reproduces those tables and the byte count has reproduced the model.
+**`REPRODUCE.md` is the recorded command chain** (from the build session's command log): every
+`--include-weights` / `--exclude-weights` string, thread count, tool commit and intermediate
+sha256. It has not been re-run end to end; say so whenever citing it.
 
-Do **not** attribute `scripts/quant-heretic-hybrid.sh`'s `--include-weights` strings to
-q4lean — that script builds a different artifact and keeps the PLE table at F16, where q4lean
-has it at Q4_0.
+`scripts/quant-heretic-hybrid.sh` is **step 3 only** of the q4lean chain (it builds
+`Hybrid-f16.gguf`, PLE table still F16). Do not present its strings as the whole recipe; the
+q4ple / q4lean2 / q4lean5 passes in `REPRODUCE.md` follow it.
 
 ## Facts that bite
 
@@ -67,8 +69,8 @@ has it at Q4_0.
 - `--kv-unified` with slots>1 silently disables QSA. Check this first when throughput looks wrong.
 - Stock llama.cpp (post-#27742) **loads** this GGUF — verified by loading, see `docs/STOCK-LOAD.md`.
   **Rebuilding** the quant still needs patch 7; stock `--include-weights` only filters the imatrix.
-- The q4lean5 build script does not exist. The chain in README.md is reconstructed from logs
-  and is unverified until a rebuild reproduces the byte count. Say so whenever citing it.
+- There is no single q4lean5 build script; the per-step commands are in `REPRODUCE.md`. The chain
+  is unverified until a rebuild reproduces the byte count. Say so whenever citing it.
 
 ## Hygiene
 

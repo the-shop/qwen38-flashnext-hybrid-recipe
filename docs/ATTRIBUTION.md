@@ -18,7 +18,7 @@ as ours.
 | Mirror we downloaded from | **ModelScope** | `modelscope.cn/models/trohrbaugh/Qwen3.8-Flash-Next-heretic`, pulled 2026-10-02 14:54–20:44 CEST — evidence below |
 | Runtime | **ggml-org** and llama.cpp contributors | <https://github.com/ggml-org/llama.cpp> |
 | Architecture support — **merged** | **unslothai** | llama.cpp PR **#27742**, merged 2026-08-27. This is what lets stock llama.cpp load our GGUF. |
-| Conversion tooling | **unslothai**, via the #27742 tree | llama.cpp @ `6c84c7d5` (the #27742 merge); the #27739 fork's `convert_hf_to_gguf.py` has no `qwen4exp` support, so conversion must have used this tree (inference from capability) |
+| Conversion tooling | **unslothai**, via the #27742 tree | llama.cpp @ `6c84c7d5` (the #27742 merge); the F16 conversion ran in this tree (recorded command, see `REPRODUCE.md` step 2); the #27739 fork's `convert_hf_to_gguf.py` has no `qwen4exp` support |
 | Architecture support — **closed** | **JJJYmmm** | llama.cpp PR **#27739**, branch `add_qwen4exp` @ `dfa0c0f`, 2026-08-26. **Never merged** — and it is the branch we actually built and quantized on. |
 | Comparison baseline | **Unsloth** | UD-Q4_K_XL — per the baseline serving script (not shipped): "WEIGHTS: unsloth UD-Q4_K_XL, locally patched and re-split from 4 into 5 shards". **Our copy is re-split, not pristine.** |
 | Sibling quants (downloaded, not used in the build) | **groxaxo** | `groxaxo/Qwen3.8-Flash-Next-Heretic-GGUF` (UD-IQ4_XS) |
@@ -27,8 +27,9 @@ as ours.
 ### On PR #27739
 
 Credit it plainly. JJJYmmm's `add_qwen4exp` lost the race to #27742 and was closed unmerged,
-but **it is the code that produced these files** — every GGUF in this project was converted,
-quantized and first served on that branch. Four of the seven patches in `patches/` are
+but **it is the code that produced these files** — the main GGUF was quantized and first
+served on that branch (the F16 conversion ran on the #27742 tree, the MTP heads on later
+master; see `REPRODUCE.md`). Four of the seven patches in `patches/` are
 backports of #27742's merged work *into* #27739, which is why the output is loadable by stock
 llama.cpp today.
 

@@ -30,11 +30,13 @@ Parent: `trohrbaugh/Qwen3.8-Flash-Next-heretic` (sha256-verified) · base `Qwen/
 
 ## Status of this document
 
-The winner, `q4lean5`, was built in several passes. **The exact
-`--include-weights` arguments were never recorded.** What follows is reconstructed
-from the quantize logs (pass headers, input/output filenames, declared ftype, and
-the resulting tensor census). It is faithful in intent and unverified in detail
-until a rebuild reproduces the byte count.
+The winner, `q4lean5`, was built in several passes. The exact commands, including every
+`--include-weights` / `--exclude-weights` argument, thread count and tool commit, were
+recovered from the build session's command log and are in **[`REPRODUCE.md`](REPRODUCE.md)**,
+together with the sha256 and byte size of every intermediate that still exists. (v0.1.0 said
+these arguments were never recorded; they were in the session log, not in the quantize logs.)
+The full chain has **not** been re-run end to end, so it stays unverified until a rebuild
+reproduces the byte count.
 
 ## Lineage
 
@@ -49,10 +51,12 @@ Qwen/Qwen3.8-Flash-Next                       (Alibaba, Qwen Community License 1
 
 ## Build chain to the winner
 
+Exact commands per step: [`REPRODUCE.md`](REPRODUCE.md).
+
 | step | input | output | ftype | bytes |
 |---|---|---|---|---|
-| 3-pass hybrid | F16.gguf | Hybrid-f16.gguf | — | ~180 GB **(deleted: VOID-ARCH)** |
-| — | Hybrid-f16.gguf | q4ple.gguf | Q4_0 | 106,754,669,696 |
+| 3-pass hybrid (`scripts/quant-heretic-hybrid.sh 12`) | F16.gguf | Hybrid-f16.gguf | — | ~180 GB **(deleted: VOID-ARCH)** |
+| PLE table F16→q4_0 (`--include-weights per_layer_token_embd`) | Hybrid-f16.gguf | q4ple.gguf | Q4_0 | 106,754,669,696 |
 | pass A: gate/up q4_K→q4_0 | q4ple.gguf | .tA.gguf | Q4_0 | — |
 | pass B: dense/emb/lm_head→q8_0, exclude experts+PLE | .tA.gguf | q4lean2.gguf | Q8_0 | 102,523,604,096 |
 | dense→q6_K | q4lean2.gguf | **q4lean5.gguf** | Q6_K | **101,488,511,616** |
@@ -123,6 +127,7 @@ anything public.
 ```
 CLAUDE.md (AGENTS.md -> CLAUDE.md)    repo rules: releases, attribution, claims discipline
 CHANGELOG.md                           release history
+REPRODUCE.md                           exact rebuild chain: commands, tool commits, sha256 per step
 docs/ATTRIBUTION.md                    the full chain; BINDING
 docs/TYPEMAP.md                        measured type maps = the authoritative recipe
 patches/qwen4exp-pr27739-local.patch   7 files, +151/-17 against JJJYmmm/llama.cpp @ dfa0c0f

@@ -2,6 +2,19 @@
 
 All notable changes to this recipe repository. Versions are annotated git tags on `main`.
 
+## Unreleased
+
+- **Reproduction:** `REPRODUCE.md` gives the exact command chain from the source checkpoint to the
+  shipped shards (tool commits, every `--include-weights` / `--exclude-weights` argument, thread
+  counts, `LLAMA_MMAP_PREFETCH=0`), with the sha256 and byte size of every surviving
+  intermediate and a verified / inferred split. Recovered from the build session's command log.
+- **Correction:** v0.1.0 said the literal quantize arguments were never recorded and that
+  `scripts/quant-heretic-hybrid.sh` is a different recipe. Both were wrong: the arguments were in
+  the session log, and that script is step 3 of the q4lean chain (README, `docs/TYPEMAP.md`,
+  repo rules updated). The chain is still not re-run end to end.
+- **Attribution:** the F16 conversion on the #27742 tree (`6c84c7d5`) is now recorded, not
+  inferred (`docs/ATTRIBUTION.md`).
+
 ## v0.1.0 — 2026-10-10
 
 First public release of the build recipe and runtime notes for
