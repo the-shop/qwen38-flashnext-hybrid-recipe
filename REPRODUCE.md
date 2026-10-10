@@ -16,7 +16,8 @@ by **Unsloth**. Full chain and licence terms: [`docs/ATTRIBUTION.md`](docs/ATTRI
 |---|---|
 | **Recorded** | Every command below was taken from the build session's own command log (the shell commands as executed, with arguments), not reconstructed from quantize log headers. The quantize log files themselves are not shipped. |
 | **Verified** | The sha256 and byte size of every intermediate that still exists (table at the end), the source weights against the abliteration run's own `SHA256SUMS`, the shipped shards against the release `SHA256SUMS`, and a byte-identical rebuild of both MTP heads on a second llama.cpp tree and thread count. |
-| **Not verified** | The main chain (steps 2–6) has **not** been re-executed end to end. Until a rebuild reproduces `e84a8f84…` / 101,488,511,616 B, the acceptance bar in [`docs/TYPEMAP.md`](docs/TYPEMAP.md) applies. |
+| **Rebuilt** | On 2026-10-10 steps 5 and 6, the release step (metadata rewrite + split) and the Q8 reference (quantize + split + rename) were re-run from the kept inputs with the recorded commands and thread counts. Every output matched its recorded sha256 and byte size: q4lean2 `a5f626a5…`, q4lean5 `e84a8f84…`, all three q4lean5 release shards, REF-pure `d5ab2a73…` and all five Q8_0 release shards. |
+| **Not verified** | Steps 2–4 (BF16 → F16 → Hybrid-f16 → q4ple) have not been re-run; they need about 420 GB of scratch space. Until they reproduce `2eace280…` and `ac7a3c7c…`, the acceptance bar in [`docs/TYPEMAP.md`](docs/TYPEMAP.md) applies to them. |
 
 ## Environment
 
@@ -212,7 +213,7 @@ LLAMA_MMAP_PREFETCH=0 "$Q" --pure \
 - **Thread count.** Steps 3–6 ran at different thread counts (12, 6, 6, 6). A probe on a small
   synthetic F16 GGUF (not on this model) found `$LLAMA_FORK`'s `llama-quantize` output
   thread-invariant, and the MTP Q8_0 head above came out identical at 8 and 4 threads on two
-  different trees. Expected, not proven, for the full chain.
+  different trees. Confirmed for steps 5–6 and the Q8 reference by the 2026-10-10 rebuild; expected, not proven, for steps 2–4.
 - **Stock vs fork quantize.** On the same synthetic GGUF, stock `v0.6.0` `--pure q8_0` matched
   the fork byte for byte. That covers kernels, not the include/exclude gating of steps 3–6,
   which stock does not have.
@@ -237,5 +238,7 @@ LLAMA_MMAP_PREFETCH=0 "$Q" --pure \
 | MTP BF16 / Q8_0 reproducible | **verified**, byte-identical rebuild on v0.6.0 |
 | Hybrid-f16 exact bytes / sha256 | **not recorded** (deleted) |
 | step-2 Python package versions | **not recorded** |
-| full chain reproduces `e84a8f84…` byte for byte | **unverified**: not re-run |
+| q4ple → q4lean2 → q4lean5 → release shards reproduce byte for byte | **verified**, rebuilt 2026-10-10 |
+| F16 → REF-pure → Q8_0 release shards reproduce byte for byte | **verified**, rebuilt 2026-10-10 |
+| BF16 → F16 → Hybrid-f16 → q4ple reproduce byte for byte | **unverified**: not re-run (space) |
 | thread count does not matter for steps 3–6 | **inferred** from a small-model probe |
